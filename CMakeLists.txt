@@ -7,12 +7,11 @@ add_subdirectory(banking)
 
 if(BUILD_TESTS)
     enable_testing()
-    
     add_subdirectory(third-party/gtest)
     
     add_executable(check tests/test_account.cpp tests/test_transaction.cpp)
     target_link_libraries(check banking gtest gtest_main)
-    target_include_directories(check PRIVATE banking third-party/gtest/googletest/include)
+    target_include_directories(check PRIVATE banking)
     
     add_test(NAME check COMMAND check)
 endif()
