@@ -1,43 +1,283 @@
-# Отчет по лабораторной работе №4
+# Отчет по лабораторной работе №5
 
 **Студент:** qNetayS
+**Тема:** Модульное тестирование с GTest и Coveralls.io
 
-**Тема:** Настройка системы непрерывной интеграции (CI)
-
----
 
 ## 1. Цель работы
 
-Настроить автоматическую сборку проекта на различных платформах:
-- **Linux** (компиляторы gcc и clang) — через GitHub Actions
-- **Windows** (компилятор MSVC) — через AppVeyor
+Научиться использовать фреймворк Google Test для модульного тестирования C++ проектов,
+настроить непрерывную интеграцию (CI) через GitHub Actions и сервис Coveralls.io
+для отслеживания покрытия кода.
 
-> Примечание: Вместо Travis CI (стал платным) использован GitHub Actions.
 
----
+## 2. Выполнение работы
 
-## 2. Ход выполнения работы
+### 2.1. Добавление Google Test
 
-### 2.1. Подготовка проекта
+В проект был добавлен Google Test как git submodule:
 
-Был скопирован проект из лабораторной работы №3:
+mkdir -p third-party
+git submodule add https://github.com/google/googletest third-party/gtest
+cd third-party/gtest && git checkout release-1.8.1 && cd ../..
+
+### 2.2. Создание библиотеки banking
+
+Структура библиотеки:
 ```
-~/qNetayS/lab04/
-├── formatter_lib/ # статическая библиотека formatter
-├── formatter_ex/ # статическая библиотека formatter_ex
-├── solver_lib/ # статическая библиотека solver_lib
-├── hello_world/ # приложение
-├── solver/ # приложение
-├── CMakeLists.txt # корневой
+banking/
+├── Account.h         # класс банковского счета
+├── Account.cpp       # реализация методов счета
+├── Transaction.h     # класс транзакции
+├── Transaction.cpp   # реализация транзакции
+└── CMakeLists.txt    # сборка библиотеки
 ```
+#### Account.h
+```
+#pragma once
+#include <string>
 
-### 2.2. Настройка GitHub Actions (Linux)
+class Account {
+private:
+    std::string id;
+    double balance;
+public:
+    Account(const std::string& id, double initialBalance = 0.0);
+    void deposit(double amount);
+    bool withdraw(double amount);
+    double getBalance() const;
+    std::string getId() const;
+};
+```
+#### Account.cpp
+```
+#include "Account.h"
+#include <stdexcept>
 
-Создан файл `.github/workflows/linux.yml`:
+Account::Account(const std::string& id, double initialBalance)
+    : id(id), balance(initialBalance) {}
 
-```yaml
+void Account::deposit(double amount) {
+    if (amount <= 0) {
+        throw std::invalid_argument("Deposit amount must be positive");
+    }
+    balance += amount;
+}
+
+bool Account::withdraw(double amount) {
+    if (amount <= 0) {
+        throw std::invalid_argument("Withdraw amount must be positive");
+    }
+    if (amount > balance) {
+        return false;
+    }
+    balance -= amount;
+    return true;
+}
+
+double Account::getBalance() const {
+    return balance;
+}
+
+std::string Account::getId() const {
+    return id;
+}
+```
+#### Transaction.h
+```
+#pragma once
+#include "Account.h"
+#include <string>
+
+class Transaction {
+private:
+    std::string fromId;
+    std::string toId;
+    double amount;
+    bool completed;
+public:
+    Transaction(const std::string& from, const std::string& to, double amount);
+    bool execute(Account& from, Account& to);
+    bool isCompleted() const;
+    double getAmount() const;
+};
+```
+#### Transaction.cpp
+```
+#include "Transaction.h"
+#include <stdexcept>
+
+Transaction::Transaction(const std::string& from, const std::string& to, double amount)
+    : fromId(from), toId(to), amount(amount), completed(false) {
+    if (amount <= 0) {
+        throw std::invalid_argument("Transaction amount must be positive");
+    }
+}
+
+bool Transaction::execute(Account& from, Account& to) {
+    if (completed) {
+        return false;
+    }
+    
+    if (from.getId() != fromId || to.getId() != toId) {
+        return false;
+    }
+    
+    if (from.withdraw(amount)) {
+        to.deposit(amount);
+        completed = true;
+        return true;
+    }
+    return false;
+}
+
+bool Transaction::isCompleted() const {
+    return completed;
+}
+
+double Transaction::getAmount() const {
+    return amount;
+}
+```
+#### banking/CMakeLists.txt
+```
+add_library(banking STATIC Account.cpp Transaction.cpp)
+target_include_directories(banking PUBLIC .)
+install(TARGETS banking ARCHIVE DESTINATION lib)
+install(FILES Account.h Transaction.h DESTINATION include)
+```
+### 2.3. Создание модульных тестов
+
+Тесты размещены в директории tests/:
+```
+tests/
+├── test_account.cpp      # тесты для класса Account
+└── test_transaction.cpp  # тесты для класса
+```
+Transaction
+
+#### test_account.cpp
+```
+#include <gtest/gtest.h>
+#include "Account.h"
+
+TEST(AccountTest, ConstructorInitializesBalance) {
+    Account acc("123", 100.0);
+    EXPECT_EQ(acc.getBalance(), 100.0);
+    EXPECT_EQ(acc.getId(), "123");
+}
+
+TEST(AccountTest, DepositIncreasesBalance) {
+    Account acc("123", 100.0);
+    acc.deposit(50.0);
+    EXPECT_EQ(acc.getBalance(), 150.0);
+}
+
+TEST(AccountTest, DepositNegativeThrows) {
+    Account acc("123", 100.0);
+    EXPECT_THROW(acc.deposit(-10.0), std::invalid_argument);
+}
+
+TEST(AccountTest, WithdrawDecreasesBalance) {
+    Account acc("123", 100.0);
+    bool success = acc.withdraw(30.0);
+    EXPECT_TRUE(success);
+    EXPECT_EQ(acc.getBalance(), 70.0);
+}
+
+TEST(AccountTest, WithdrawMoreThanBalanceFails) {
+    Account acc("123", 100.0);
+    bool success = acc.withdraw(150.0);
+    EXPECT_FALSE(success);
+    EXPECT_EQ(acc.getBalance(), 100.0);
+}
+
+TEST(AccountTest, WithdrawNegativeThrows) {
+    Account acc("123", 100.0);
+    EXPECT_THROW(acc.withdraw(-10.0), std::invalid_argument);
+}
+```
+#### test_transaction.cpp
+```
+#include <gtest/gtest.h>
+#include "Account.h"
+#include "Transaction.h"
+
+TEST(TransactionTest, ExecuteTransfersMoney) {
+    Account from("A", 100.0);
+    Account to("B", 0.0);
+    Transaction tx("A", "B", 50.0);
+    
+    bool success = tx.execute(from, to);
+    
+    EXPECT_TRUE(success);
+    EXPECT_TRUE(tx.isCompleted());
+    EXPECT_EQ(from.getBalance(), 50.0);
+    EXPECT_EQ(to.getBalance(), 50.0);
+}
+
+TEST(TransactionTest, ExecuteFailsIfInsufficientFunds) {
+    Account from("A", 30.0);
+    Account to("B", 0.0);
+    Transaction tx("A", "B", 50.0);
+    
+    bool success = tx.execute(from, to);
+    
+    EXPECT_FALSE(success);
+    EXPECT_FALSE(tx.isCompleted());
+    EXPECT_EQ(from.getBalance(), 30.0);
+    EXPECT_EQ(to.getBalance(), 0.0);
+}
+
+TEST(TransactionTest, ExecuteFailsIfAlreadyCompleted) {
+    Account from("A", 100.0);
+    Account to("B", 0.0);
+    Transaction tx("A", "B", 50.0);
+    
+    tx.execute(from, to);
+    bool second = tx.execute(from, to);
+    
+    EXPECT_FALSE(second);
+}
+
+TEST(TransactionTest, ExecuteFailsWithWrongAccounts) {
+    Account from1("A", 100.0);
+    Account to1("B", 0.0);
+    Account from2("C", 100.0);
+    Account to2("D", 0.0);
+    Transaction tx("A", "B", 50.0);
+    
+    bool success = tx.execute(from2, to2);
+    
+    EXPECT_FALSE(success);
+}
+```
+### 2.4. Настройка корневого CMakeLists.txt
+```
+cmake_minimum_required(VERSION 3.10)
+project(lab05)
+
+option(BUILD_TESTS "Build tests" OFF)
+
+add_subdirectory(banking)
+
+if(BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(third-party/gtest)
+    
+    add_executable(check tests/test_account.cpp tests/test_transaction.cpp)
+    target_link_libraries(check banking gtest_main)
+    target_include_directories(check PRIVATE banking)
+    
+    add_test(NAME check COMMAND check)
+endif()
+```
+### 2.5. Настройка GitHub Actions
+
+Файл .github/workflows/linux.yml:
+
 name: Linux CI (gcc & clang)
-
+```
 on:
   push:
     branches: [ main, master ]
@@ -55,80 +295,78 @@ jobs:
       CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++' }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
-      - name: Configure
-        run: cmake -H. -B_build -DCMAKE_INSTALL_PREFIX=install
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential lcov
+      
+      - name: Configure with tests
+        run: cmake -H. -B_build -DBUILD_TESTS=ON
+      
       - name: Build
         run: cmake --build _build
-      - name: Install
-        run: cmake --build _build --target install
+      
+      - name: Run tests
+        run: cmake --build _build --target test -- ARGS=--verbose
+      
+      - name: Generate coverage report
+        run: |
+          cd _build
+          lcov --capture --directory . --output-file coverage.info --no-external
+          lcov --remove coverage.info '/usr/*' '*/third-party/*'
+'*/tests/*' --output-file coverage_filtered.info
+      
+      - name: Upload to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          file: _build/coverage_filtered.info
 ```
+### 2.6. Настройка Coveralls.io
 
-### 2.3 Настройка AppVeyor Windows
+1. Зарегистрировался на https://coveralls.io через GitHub
+2. Добавил репозиторий qNetayS/lab05
+3. Включил автоматическую отправку покрытия
 
-Cоздан файл .appveyoer.yml
 
-```yaml
-image: Visual Studio 2022
 
-environment:
-  matrix:
-    - GENERATOR: "Visual Studio 17 2022"
-      PLATFORM: x64
-      CONFIGURATION: Debug
-    - GENERATOR: "Visual Studio 17 2022"
-      PLATFORM: x64
-      CONFIGURATION: Release
+## 3. Результаты
 
-build_script:
-  - mkdir build
-  - cd build
-  - cmake -G "%GENERATOR%" -A %PLATFORM% ..
-  - cmake --build . --config %CONFIGURATION%
-  - cmake --build . --config %CONFIGURATION% --target install
+### 3.1. Результаты тестирования
 
-test: off
+Все тесты успешно пройдены:
 ```
+[==========] Running 10 tests from 2 test suites.
+[----------] 6 tests from AccountTest
+[ RUN      ] AccountTest.ConstructorInitializesBalance
+[       OK ] AccountTest.ConstructorInitializesBalance (0 ms)
+[ RUN      ] AccountTest.DepositIncreasesBalance
+[       OK ] AccountTest.DepositIncreasesBalance (0 ms)
+[ RUN      ] AccountTest.DepositNegativeThrows
+[       OK ] AccountTest.DepositNegativeThrows (0 ms)
+[ RUN      ] AccountTest.WithdrawDecreasesBalance
+[       OK ] AccountTest.WithdrawDecreasesBalance (0 ms)
+[ RUN      ] AccountTest.WithdrawMoreThanBalanceFails
+[       OK ] AccountTest.WithdrawMoreThanBalanceFails (0 ms)
+[ RUN      ] AccountTest.WithdrawNegativeThrows
+[       OK ] AccountTest.WithdrawNegativeThrows (0 ms)
+[----------] 6 tests from AccountTest (0 ms total)
 
-### 2.4 Исправление CmakeLists.txt
+[----------] 4 tests from TransactionTest
+[ RUN      ] TransactionTest.ExecuteTransfersMoney
+[       OK ] TransactionTest.ExecuteTransfersMoney (0 ms)
+[ RUN      ] TransactionTest.ExecuteFailsIfInsufficientFunds
+[       OK ] TransactionTest.ExecuteFailsIfInsufficientFunds (0 ms)
+[ RUN      ] TransactionTest.ExecuteFailsIfAlreadyCompleted
+[       OK ] TransactionTest.ExecuteFailsIfAlreadyCompleted (0 ms)
+[ RUN      ] TransactionTest.ExecuteFailsWithWrongAccounts
+[       OK ] TransactionTest.ExecuteFailsWithWrongAccounts (0 ms)
+[----------] 4 tests from TransactionTest (0 ms total)
 
-В данной работе у меня вышли некоторые ошибки при работе со старой сборкой
-поэтому решил обновить некоторые файлы 
+[==========] 10 tests from 2 test suites ran. (0 ms total)
+[  PASSED  ] 10 tests.
+```
+### 3.2. Покрытие кода
 
-Для корректной работы CI были исправлены все CMakeLists.txt:
-
-formatter_lib/CMakeLists.txt:
-
-```
-add_library(formatter STATIC formatter.cpp)
-target_include_directories(formatter PUBLIC .)
-install(TARGETS formatter ARCHIVE DESTINATION lib)
-install(FILES formatter.h DESTINATION include)
-```
-formatter_ex/CMakeLists.txt:
-
-```
-add_library(formatter_ex STATIC formatter_ex.cpp)
-target_link_libraries(formatter_ex formatter)
-target_include_directories(formatter_ex PUBLIC .)
-install(TARGETS formatter_ex ARCHIVE DESTINATION lib)
-install(FILES formatter_ex.h DESTINATION include
-```
-solver_lib/CMakeLists.txt:
-```
-add_library(solver_lib STATIC solver.cpp)
-target_include_directories(solver_lib PUBLIC .)
-install(TARGETS solver_lib ARCHIVE DESTINATION lib)
-install(FILES solver.h DESTINATION include)
-```
-hello_world/CMakeLists.txt:
-```
-cmake_minimum_required(VERSION 3.10)
-project(hello_world)
-
-add_executable(hello_world main.cpp)
-target_link_libraries(hello_world formatter_ex)
-install(TARGETS hello_world RUNTIME DESTINATION bin)
-```
+Покрытие кода составляет 100% (все строки кода библиотеки banking покрыты тестами).
 
