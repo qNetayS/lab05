@@ -21,14 +21,25 @@ jobs:
           submodules: recursive
       
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential lcov
       
       - name: Configure with tests
-        # Отключаем -Werror для совместимости с GTest
-        run: cmake -H. -B_build -DBUILD_TESTS=ON -DCMAKE_CXX_FLAGS="-w"
+        run: cmake -H. -B_build -DBUILD_TESTS=ON
       
       - name: Build
         run: cmake --build _build
       
       - name: Run tests
-        run: cmake --build _build --target test -- ARGS=--verbose
+        run: ctest --test-dir _build --output-on-failure
+      
+      - name: Generate coverage
+        run: |
+          cd _build
+          lcov --capture --directory . --output-file coverage.info --no-external
+          lcov --remove coverage.info '/usr/*' '*/third-party/*' '*/tests/*' --output-file coverage_filtered.info
+      
+      - name: Upload to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          file: _build/coverage_filtered.info
+          github-token: ${{ secrets.GITHUB_TOKEN }}
