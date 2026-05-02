@@ -17,11 +17,9 @@ jobs:
       CXX: ${{ matrix.compiler == 'gcc' && 'g++' || 'clang++' }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          submodules: recursive
       
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake build-essential lcov
+        run: sudo apt-get update && sudo apt-get install -y cmake build-essential
       
       - name: Configure with tests
         run: cmake -H. -B_build -DBUILD_TESTS=ON
@@ -31,24 +29,3 @@ jobs:
       
       - name: Run tests
         run: ctest --test-dir _build --output-on-failure
-      
-      - name: Generate coverage (only banking)
-        run: |
-          cd _build
-          # Собираем только banking с флагами покрытия
-          cmake -H.. -B. -DBUILD_TESTS=ON -DCMAKE_CXX_FLAGS="--coverage" -DCMAKE_C_FLAGS="--coverage"
-          cmake --build . --target banking
-          
-          # Запускаем тесты для генерации .gcda
-          ctest --output-on-failure
-          
-          # Собираем покрытие ТОЛЬКО для banking (исключая GTest)
-          lcov --capture --directory . --output-file coverage.info --no-external
-          lcov --remove coverage.info '*/third-party/*' '*/tests/*' '*/usr/*' --output-file coverage_filtered.info
-          lcov --list coverage_filtered.info
-      
-      - name: Upload to Coveralls
-        uses: coverallsapp/github-action@v2
-        with:
-          file: _build/coverage_filtered.info
-          github-token: ${{ secrets.GITHUB_TOKEN }}
